@@ -129,7 +129,7 @@ footer{order:2;height:66px;padding:0 10px;gap:6px;background:var(--bg2);border-t
     </nav>
     <div class="lib"><div class="sec">Saved Tracks</div><div class="list" id="libraryList"></div></div>
   </aside>
-
+ 
   <section class="stage">
     <main class="content">
       <div class="search"><span>🔍</span><input id="q" placeholder="Search tracks, artists, or genres..." autocomplete="off"></div>
@@ -166,7 +166,7 @@ footer{order:2;height:66px;padding:0 10px;gap:6px;background:var(--bg2);border-t
     </div>
   </section>
 </div>
-
+ 
 <footer>
   <div class="np">
     <img id="npImg" alt="">
@@ -192,18 +192,18 @@ footer{order:2;height:66px;padding:0 10px;gap:6px;background:var(--bg2);border-t
 </footer>
 <div class="toast" id="toast"></div>
 <div id="ytWrap"><div id="ytPlayer"></div></div>
-
+ 
 <script>
 const $=id=>document.getElementById(id);
 const NOART="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='52' height='52'%3E%3Crect width='52' height='52' fill='%23282836'/%3E%3C/svg%3E";
 $('npImg').src=NOART;
-
+ 
 let results=[],tab='search',queue=[],qi=-1,cur=null,shuffle=false,repeat=0;
 let searchTok=0,lyr=null,lyrIdx=-1,lyrTok=0,toastT,errCount=0;
 let player=null,ytReady=false,pending=null,playing=false,volume=100,muted=false;
 let vidCache=(()=>{try{return JSON.parse(lsGet('aurasound_vid')||'{}')}catch(e){return{}}})();
 let favs=loadFavs(),ytKey=lsGet('aurasound_ytkey')||'';
-
+ 
 function lsGet(k){try{return localStorage.getItem(k)}catch(e){return null}}
 function lsSet(k,v){try{localStorage.setItem(k,v)}catch(e){}}
 function loadFavs(){try{const v=JSON.parse(lsGet('aurasound_favs3')||'[]');return Array.isArray(v)?v:[]}catch(e){return[]}}
@@ -213,13 +213,13 @@ function h(tag,cls,text){const e=document.createElement(tag);if(cls)e.className=
 function toast(m){const t=$('toast');t.textContent=m;t.classList.add('show');clearTimeout(toastT);toastT=setTimeout(()=>t.classList.remove('show'),2600)}
 function fmt(s){s=Math.max(0,s||0);return Math.floor(s/60)+':'+String(Math.floor(s%60)).padStart(2,'0')}
 const isFav=t=>favs.some(f=>f.id===t.id);
-
+ 
 /* ---------- Search (iTunes catalog = metadata only) ---------- */
 function jsonp(url){
   return new Promise((res,rej)=>{
     const cb='cb'+Date.now()+Math.floor(Math.random()*1e4),sc=document.createElement('script');
     const done=()=>{delete window[cb];sc.remove();clearTimeout(to)};
-    const to=setTimeout(()=>{done();rej(new Error('Request timed out; check your connection or ad blocker'))},8000);
+    const to=setTimeout(()=>{done();rej(new Error('Request timed out; check your connection or ad blocker'))},6000);
     window[cb]=d=>{done();res(d)};
     sc.onerror=()=>{done();rej(new Error('Request blocked; check your connection or ad blocker'))};
     sc.src=url+'&callback='+cb;document.head.appendChild(sc);
@@ -228,21 +228,27 @@ function jsonp(url){
 function search(){return mode==='playlists'?searchPl():searchSongs()}
 async function searchSongs(){
   const q=$('q').value.trim()||'top hits',tok=++searchTok;
-  setPlaceholder('Loading…');
-  try{
-    const url=`https://itunes.apple.com/search?term=${encodeURIComponent(q)}&media=music&entity=song&limit=40`;
-    let d;
-    try{d=await (await fetch(url)).json()}catch(e){d=await jsonp(url)}
-    if(tok!==searchTok)return;
-    const seen=new Set();
-    results=(d.results||[]).filter(t=>t.trackName&&!seen.has(t.trackId)&&seen.add(t.trackId)).map(t=>({
-      id:'i'+t.trackId,title:t.trackName,artist:t.artistName,
-      art:(t.artworkUrl100||'').replace('100x100','200x200')||NOART,duration:(t.trackTimeMillis||0)/1000}));
-    if(tab==='search')render();
-  }catch(e){if(tok===searchTok)setPlaceholder('Search failed: '+e.message+'')}
+  setPlaceholder('Loading…');setStatus('');
+  const itu=`https://itunes.apple.com/search?term=${encodeURIComponent(q)}&media=music&entity=song&limit=40`;
+  const dzu=`https://api.deezer.com/search?q=${encodeURIComponent(q)}&limit=40&output=jsonp`;
+  const mapI=d=>(d.results||[]).filter(t=>t.trackName).map(t=>({id:'i'+t.trackId,title:t.trackName,artist:t.artistName,
+    art:(t.artworkUrl100||'').replace('100x100','200x200')||NOART,duration:(t.trackTimeMillis||0)/1000}));
+  const mapD=d=>{if(d.error)throw new Error('Deezer error');return(d.data||[]).filter(t=>t.title).map(t=>({id:'d'+t.id,
+    title:t.title_short||t.title,artist:t.artist?.name||'',art:t.album?.cover_medium||NOART,duration:t.duration||0}))};
+  // Mobile networks often get rate-limited or blocked by one provider, so try several in turn
+  const tries=[async()=>mapI(await (await fetch(itu)).json()),async()=>mapI(await jsonp(itu)),async()=>mapD(await jsonp(dzu))];
+  let list=null,last;
+  for(const f of tries){
+    try{const r=await f();if(r.length){list=r;break}if(!list)list=r}catch(e){last=e}
+  }
+  if(tok!==searchTok)return;
+  if(list===null){setPlaceholder('Search failed: '+(last?last.message:'unknown error'));return}
+  const seen=new Set();
+  results=list.filter(t=>!seen.has(t.id)&&seen.add(t.id));
+  if(tab==='search'&&mode==='songs')render();
 }
 function setPlaceholder(m){if(tab==='search')$('results').replaceChildren(h('p','ph',m))}
-
+ 
 /* ---------- Playlists (search = 100 quota, opening = 1, playing = free) ---------- */
 let mode='songs',plResults=[],openPl=null,plTracks=[],plToken=null;
 let plCache=(()=>{try{return JSON.parse(lsGet('aurasound_plc')||'{}')}catch(e){return{}}})();
@@ -319,7 +325,7 @@ function setMode(m){
   if(m==='songs')search();else render();
 }
 document.querySelectorAll('[data-mode]').forEach(b=>b.onclick=()=>setMode(b.dataset.mode));
-
+ 
 /* ---------- Rendering ---------- */
 function card(t,list,i){
   const c=h('div','card'+(cur&&cur.id===t.id?' playing':''));
@@ -360,7 +366,7 @@ function renderQueue(){
   });
   el.replaceChildren(fr);
 }
-
+ 
 /* ---------- Favorites & queue ---------- */
 function toggleFav(t){
   const i=favs.findIndex(f=>f.id===t.id);
@@ -383,7 +389,7 @@ function removeFromQueue(i){
   renderQueue();
 }
 $('qClear').onclick=()=>{queue=cur?[cur]:[];qi=cur?0:-1;renderQueue()};
-
+ 
 /* ---------- YouTube playback (official embed, full songs) ---------- */
 window.onYouTubeIframeAPIReady=()=>{
   player=new YT.Player('ytPlayer',{width:256,height:144,
@@ -392,7 +398,7 @@ window.onYouTubeIframeAPIReady=()=>{
       onStateChange:onState,onError:onYtError}});
 };
 const tag=document.createElement('script');tag.src='https://www.youtube.com/iframe_api';document.head.appendChild(tag);
-
+ 
 function onState(e){
   const S=YT.PlayerState;
   playing=e.data===S.PLAYING||e.data===S.BUFFERING;
@@ -493,7 +499,7 @@ setInterval(()=>{
   $('cur').textContent=fmt(t);if(d)$('dur').textContent=fmt(d);
   syncLyrics(t);
 },250);
-
+ 
 /* ---------- Synced lyrics (LRCLIB) ---------- */
 function parseLRC(txt){
   const out=[];
@@ -539,7 +545,7 @@ function syncLyrics(now){
   lyrIdx=idx;
   if(kids[idx]){kids[idx].classList.add('active');kids[idx].scrollIntoView({behavior:'smooth',block:'center'})}
 }
-
+ 
 /* ---------- UI wiring ---------- */
 const PANELS=['lyricsPanel','queuePanel','keyPanel'];
 function openOnly(id){PANELS.forEach(p=>$(p).classList.toggle('open',p===id))}
@@ -590,7 +596,7 @@ document.querySelectorAll('#genres .pill').forEach(p=>p.onclick=()=>{
 let st;
 $('q').oninput=()=>{clearTimeout(st);if(mode==='playlists')return;st=setTimeout(search,300)};
 $('q').onkeydown=e=>{if(e.key==='Enter'){clearTimeout(st);search();$('q').blur()}};
-
+ 
 if(location.protocol==='file:')setStatus('You opened this as a file, so YouTube will refuse to play (error 153). In the folder containing this file run:  python3 -m http.server 8000  then open http://localhost:8000/aurasound.html');
 render();search();
 if(!ytKey)setTimeout(()=>toast('Tap "🔑 YouTube key" to enable full songs'),800);
